@@ -11,12 +11,11 @@ import { sql } from "drizzle-orm";
 const NHK_EASY_LIST = "https://www3.nhk.or.jp/news/easy/news-list.json";
 const NHK_EASY_BASE = "https://www3.nhk.or.jp/news/easy";
 
-interface CuratedItem {
+interface CuratedArticle {
   title: string;
   url: string;
   body: string;
   kind: "nhk_easy" | "nhk";
-  contentId: number;
 }
 
 export async function GET(req: Request) {
@@ -28,20 +27,27 @@ export async function GET(req: Request) {
     .select({ id: users.id, email: users.email })
     .from(users);
 
-  const curated: CuratedItem[] = [];
+  const articles: CuratedArticle[] = [];
   try {
     const easy = await pickNhkEasy();
-    if (easy) curated.push(easy);
+    if (easy) articles.push(easy);
   } catch (e) {
     console.warn("nhk easy fetch failed:", e);
   }
 
-  // Save against each user so /mine surfaces today's articles per-user.
+  const apiKey = process.env.RESEND_API_KEY;
+  const from = process.env.RESEND_FROM;
+
+  // Save against each user so /mine surfaces today's articles per-user,
+  // and email each user their own digest with correct content links.
+  let emailsSent = 0;
   for (const u of targetUsers) {
-    for (const c of curated) {
+    const userItems: Array<CuratedArticle & { contentId: number }> = [];
+
+    for (const a of articles) {
       const [src] = await db
         .insert(contentSources)
-        .values({ kind: c.kind, sourceUrl: c.url, sourceName: c.title })
+        .values({ kind: a.kind, sourceUrl: a.url, sourceName: a.title })
         .onConflictDoNothing()
         .returning();
       const [item] = await db
@@ -49,37 +55,49 @@ export async function GET(req: Request) {
         .values({
           userId: u.id,
           sourceId: src?.id ?? null,
-          titleJp: c.title,
-          bodyJp: c.body,
+          titleJp: a.title,
+          bodyJp: a.body,
         })
         .returning();
-      c.contentId = item.id;
+      userItems.push({ ...a, contentId: item.id });
     }
-  }
 
-  // Email via Resend if configured.
-  const apiKey = process.env.RESEND_API_KEY;
-  const from = process.env.RESEND_FROM;
-  const to = process.env.DAILY_DIGEST_TO;
-  if (apiKey && from && to && curated.length > 0) {
-    const resend = new Resend(apiKey);
-    await resend.emails.send({
-      from,
-      to,
-      subject: `Today's Japanese — ${todayLabel()}`,
-      html: renderDigest(curated),
-    });
+    // Send per-user digest email. Skip users with no email.
+    if (!u.email || u.email === "unknown@kotoba.local") {
+      console.warn(
+        `daily-curate: skipping email for user ${u.id} (no email set)`,
+      );
+      continue;
+    }
+    if (apiKey && from && userItems.length > 0) {
+      try {
+        const resend = new Resend(apiKey);
+        await resend.emails.send({
+          from,
+          to: u.email,
+          subject: `Today's Japanese — ${todayLabel()}`,
+          html: renderDigest(userItems),
+        });
+        emailsSent++;
+      } catch (e) {
+        console.warn(`daily-curate: email failed for ${u.email}:`, e);
+      }
+    }
   }
 
   await recordCronRun(
     "daily_curate",
-    curated.length > 0 ? "ok" : "partial",
-    `curated=${curated.length}`,
+    articles.length > 0 ? "ok" : "partial",
+    `curated=${articles.length}, emails=${emailsSent}`,
   );
-  return NextResponse.json({ ok: true, count: curated.length });
+  return NextResponse.json({
+    ok: true,
+    count: articles.length,
+    emails: emailsSent,
+  });
 }
 
-async function pickNhkEasy(): Promise<CuratedItem | null> {
+async function pickNhkEasy(): Promise<CuratedArticle | null> {
   const res = await fetch(NHK_EASY_LIST, {
     headers: { "User-Agent": "KotobaBot/0.1" },
     signal: AbortSignal.timeout(15_000),
@@ -110,7 +128,6 @@ async function pickNhkEasy(): Promise<CuratedItem | null> {
             url,
             body: fetched.body,
             kind: "nhk_easy",
-            contentId: 0,
           };
         } catch {
           continue;
@@ -132,7 +149,9 @@ function todayLabel(): string {
   return tz.format(d);
 }
 
-function renderDigest(items: CuratedItem[]): string {
+function renderDigest(
+  items: Array<CuratedArticle & { contentId: number }>,
+): string {
   const base = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
   const rows = items
     .map(
