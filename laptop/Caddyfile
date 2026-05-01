@@ -1,0 +1,28 @@
+# Caddy reverse proxy fronting AnkiConnect on the laptop.
+# Tailscale Funnel exposes :8766 to the public internet over HTTPS; Caddy
+# enforces the X-Anki-Key header before passing traffic to AnkiConnect on
+# :8765.
+#
+# Usage:
+#   1. Install Caddy: https://caddyserver.com/docs/install
+#   2. Set env var: export ANKI_PROXY_KEY="your-32-char-random-string"
+#   3. Run: caddy run --config Caddyfile --adapter caddyfile
+#   4. Run: tailscale funnel --bg 8766
+#   5. Use the Tailscale URL + ANKI_PROXY_KEY in Kotoba's settings page.
+
+{
+	auto_https off
+}
+
+:8766 {
+	@unauthorized {
+		not header X-Anki-Key {env.ANKI_PROXY_KEY}
+	}
+	respond @unauthorized "forbidden" 403
+
+	reverse_proxy localhost:8765 {
+		header_up Host localhost:8765
+		# Strip auth header before forwarding so AnkiConnect doesn't choke.
+		header_up -X-Anki-Key
+	}
+}

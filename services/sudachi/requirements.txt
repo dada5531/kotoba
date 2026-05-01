@@ -1,0 +1,5 @@
+fastapi==0.115.0
+uvicorn[standard]==0.31.0
+sudachipy==0.6.8
+sudachidict-full==20240716
+pydantic==2.9.2

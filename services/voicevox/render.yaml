@@ -1,0 +1,18 @@
+# Render service spec for VOICEVOX. The official engine ships as a Docker
+# image; deploy the CPU variant on a small Web Service. The image binds to
+# port 50021 by default; Render exposes whatever PORT env var it sets, so we
+# rely on VOICEVOX honoring VV_HOST/VV_PORT.
+
+services:
+  - type: web
+    name: kotoba-voicevox
+    runtime: image
+    image:
+      url: voicevox/voicevox_engine:cpu-latest
+    envVars:
+      - key: VV_HOST
+        value: 0.0.0.0
+      - key: VV_PORT
+        value: "10000"
+    plan: starter
+    autoDeploy: false

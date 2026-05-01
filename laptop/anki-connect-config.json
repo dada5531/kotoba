@@ -1,0 +1,9 @@
+{
+  "_comment": "Paste this into Anki → Tools → Add-ons → AnkiConnect → Config. webBindAddress=127.0.0.1 keeps AnkiConnect off the LAN — only the Caddy proxy on the same machine can reach it. The proxy then enforces X-Anki-Key on its public-facing port.",
+  "apiKey": null,
+  "apiLogPath": null,
+  "ignoreOriginList": [],
+  "webBindAddress": "127.0.0.1",
+  "webBindPort": 8765,
+  "webCorsOriginList": ["http://localhost"]
+}
